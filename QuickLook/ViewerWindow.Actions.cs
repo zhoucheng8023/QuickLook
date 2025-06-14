@@ -160,6 +160,13 @@ public partial class ViewerWindow
             Debug.WriteLine(e);
         }
 
+        if (_autoReloadWatcher != null)
+        {
+            _autoReloadWatcher.EnableRaisingEvents = false;
+            _autoReloadWatcher.Dispose();
+            _autoReloadWatcher = null;
+        }
+
         Plugin = null;
 
         _path = string.Empty;
@@ -208,20 +215,21 @@ public partial class ViewerWindow
         if (!IsVisible)
         {
             Dispatcher.BeginInvoke(new Action(() => this.BringToFront(Topmost)), DispatcherPriority.Render);
-
-            try
-            {
-                Show();
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine(ex);
-                ProcessHelper.WriteLog(ex.ToString());
-            }
+            Show();
         }
 
-        //ShowWindowCaptionContainer(null, null);
-        //WindowHelper.SetActivate(new WindowInteropHelper(this), ContextObject.CanFocus);
+        if (_autoReload && File.Exists(path))
+        {
+            _autoReloadWatcher?.Dispose();
+            _autoReloadWatcher = new FileSystemWatcher(Path.GetDirectoryName(path), Path.GetFileName(path))
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
+            };
+            _autoReloadWatcher.Changed += (_, _) =>
+                // Executed asynchronously to avoid deadlock
+                Dispatcher.BeginInvoke(() => ViewWindowManager.GetInstance().ReloadPreview());
+            _autoReloadWatcher.EnableRaisingEvents = true;
+        }
 
         // load plugin, do not block UI
         Dispatcher.BeginInvoke(new Action(() =>
