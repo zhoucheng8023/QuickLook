@@ -28,6 +28,8 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Interop;
+using System.Windows.Media;
 using Wpf.Ui.Appearance;
 using Wpf.Ui.Violeta.Appearance;
 
@@ -36,11 +38,12 @@ namespace QuickLook;
 public partial class App : Application
 {
     public static readonly string LocalDataPath = SettingHelper.LocalDataPath;
-    public static readonly string UserPluginPath = Path.Combine(SettingHelper.LocalDataPath, "QuickLook.Plugin\\");
+    public static readonly string UserPluginPath = Path.Combine(SettingHelper.LocalDataPath, @"QuickLook.Plugin\");
     public static readonly string AppFullPath = Assembly.GetExecutingAssembly().Location;
     public static readonly string AppPath = Path.GetDirectoryName(AppFullPath);
     public static readonly bool Is64Bit = Environment.Is64BitProcess;
     public static readonly bool IsUWP = ProcessHelper.IsRunningAsUWP();
+    public static readonly bool IsSandBox = !ProcessHelper.IsFullTrust();
     public static readonly bool IsWin11 = Environment.OSVersion.Version >= new Version(10, 0, 21996);
     public static readonly bool IsWin10 = !IsWin11 && Environment.OSVersion.Version >= new Version(10, 0);
     public static readonly bool IsGPUInBlacklist = SystemHelper.IsGPUInBlacklist();
@@ -51,6 +54,12 @@ public partial class App : Application
 
     static App()
     {
+        var processRenderMode = SettingHelper.Get("ProcessRenderMode", failsafe: (int)RenderMode.Default, "QuickLook");
+        if (processRenderMode == (int)RenderMode.SoftwareOnly)
+        {
+            RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
+        }
+
         // Explicitly set to PerMonitor to avoid being overridden by the system
         if (SHCore.SetProcessDpiAwareness(SHCore.PROCESS_DPI_AWARENESS.PROCESS_PER_MONITOR_DPI_AWARE) is uint result)
         {
@@ -130,6 +139,35 @@ public partial class App : Application
         // Exception handling events which are not caught in UI thread
         DispatcherUnhandledException += (_, e) =>
         {
+            // https://learn.microsoft.com/en-us/troubleshoot/developer/dotnet/framework/general/wpf-render-thread-failures
+            if (e.Exception.Message.StartsWith("UCEERR_RENDERTHREADFAILURE")
+             && e.Exception.Message.Contains("0x88980406"))
+            {
+                ProcessHelper.WriteLog(e.Exception.ToString());
+
+                // Under this exception, WPF rendering has crashed
+                // and the user must be notified using native MessageBox
+                var result = User32.MessageBoxW(
+                    new WindowInteropHelper(Current.MainWindow).Handle,
+                    $"""
+                    {e.Exception.Message} was most often due to a lack of graphics resources or hardware/driver constraints when attempting to allocate large textures.
+
+                    Although not usually recommended, would you prefer to use software rendering exclusively?
+                    """,
+                    "Fatal",
+                    User32.MessageBoxType.YesNo | User32.MessageBoxType.IconError | User32.MessageBoxType.DefButton2
+                );
+
+                if (result == User32.MessageBoxResult.IDYES)
+                {
+                    SettingHelper.Set("ProcessRenderMode", (int)RenderMode.SoftwareOnly, "QuickLook");
+                }
+
+                TrayIconManager.GetInstance().Restart(forced: true);
+                e.Handled = true;
+                return;
+            }
+
             try
             {
                 ProcessHelper.WriteLog(e.Exception.ToString());

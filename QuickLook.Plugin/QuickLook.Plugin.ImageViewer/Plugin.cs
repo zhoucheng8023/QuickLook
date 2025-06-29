@@ -15,15 +15,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+using QuickLook.Common.Helpers;
+using QuickLook.Common.Plugin;
+using QuickLook.Plugin.ImageViewer.AnimatedImage.Providers;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Input;
-using QuickLook.Common.Helpers;
-using QuickLook.Common.Plugin;
-using QuickLook.Plugin.ImageViewer.AnimatedImage.Providers;
 
 namespace QuickLook.Plugin.ImageViewer;
 
@@ -40,9 +40,9 @@ public class Plugin : IViewer
         ".gif",
         ".hdr", ".heic", ".heif",
         ".ico", ".icon", ".icns", ".iiq",
-        ".jfif", ".jp2", ".jpeg", ".jpg", ".jxl",
+        ".jfif", ".jp2", ".jpeg", ".jpg", ".jxl", ".j2k", ".jpf", ".jpx", ".jpm", ".jxr",
         ".k25", ".kdc",
-        ".mdc", ".mef", ".mos", ".mrw",
+        ".mdc", ".mef", ".mos", ".mrw", ".mj2", ".miff",
         ".nef", ".nrw",
         ".obm", ".orf",
         ".pbm", ".pcx", ".pef", ".pgm", ".png", ".pnm", ".ppm", ".psb", ".psd", ".ptx", ".pxn",
@@ -51,11 +51,14 @@ public class Plugin : IViewer
         ".sr2", ".srf", ".srw", ".svg", ".svgz",
         ".tga", ".tif", ".tiff",
         ".wdp", ".webp", ".wmf",
-        ".x3f", ".xcf",
+        ".x3f", ".xcf", ".xbm", ".xpm",
     ]);
 
     private ImagePanel _ip;
     private MetaProvider _meta;
+
+    private SvgImagePanel _ipSvg;
+    private SvgMetaProvider _metaSvg;
 
     public int Priority => 0;
 
@@ -74,6 +77,10 @@ public class Plugin : IViewer
             new KeyValuePair<string[], Type>(
                 useColorProfile ? [] : [".bmp", ".jpg", ".jpeg", ".jfif", ".tif", ".tiff"],
                 typeof(NativeProvider)));
+        AnimatedImage.AnimatedImage.Providers.Add(
+            new KeyValuePair<string[], Type>(
+                useColorProfile ? [] : [".jxr"],
+                typeof(WmpProvider)));
         AnimatedImage.AnimatedImage.Providers.Add(
             new KeyValuePair<string[], Type>([".icns"],
                 typeof(IcnsProvider)));
@@ -100,17 +107,34 @@ public class Plugin : IViewer
     {
         // Disabled due mishandling text file types e.g., "*.config".
         // Only check extension for well known image and animated image types.
-        return !Directory.Exists(path) && (IsWellKnownImageExtension(path));
+        return !Directory.Exists(path) && IsWellKnownImageExtension(path);
     }
 
     public void Prepare(string path, ContextObject context)
     {
+        if (path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
+        {
+            if (SettingHelper.Get("RenderSvgWeb", true, "QuickLook.Plugin.ImageViewer"))
+            {
+                _metaSvg = new SvgMetaProvider(path);
+                var sizeSvg = _metaSvg.GetSize();
+
+                if (!sizeSvg.IsEmpty)
+                    context.SetPreferredSizeFit(sizeSvg, 0.8d);
+                else
+                    context.PreferredSize = new Size(800, 600);
+
+                context.Theme = (Themes)SettingHelper.Get("LastTheme", 1, "QuickLook.Plugin.ImageViewer");
+                return;
+            }
+        }
+
         _meta = new MetaProvider(path);
 
         var size = _meta.GetSize();
 
         if (!size.IsEmpty)
-            context.SetPreferredSizeFit(size, 0.8);
+            context.SetPreferredSizeFit(size, 0.8d);
         else
             context.PreferredSize = new Size(800, 600);
 
@@ -119,6 +143,25 @@ public class Plugin : IViewer
 
     public void View(string path, ContextObject context)
     {
+        if (path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
+        {
+            if (SettingHelper.Get("RenderSvgWeb", true, "QuickLook.Plugin.ImageViewer"))
+            {
+                _ipSvg = new SvgImagePanel();
+                _ipSvg.PreviewSvg(path);
+
+                var sizeSvg = _metaSvg.GetSize();
+
+                context.ViewerContent = _ipSvg;
+                context.Title = sizeSvg.IsEmpty
+                    ? $"{Path.GetFileName(path)}"
+                    : $"{sizeSvg.Width}×{sizeSvg.Height}: {Path.GetFileName(path)}";
+
+                context.IsBusy = false;
+                return;
+            }
+        }
+
         _ip = new ImagePanel(context, _meta);
         var size = _meta.GetSize();
 
@@ -130,7 +173,7 @@ public class Plugin : IViewer
         _ip.ImageUriSource = Helper.FilePathToFileUrl(path);
 
         // Load the custom cursor into the preview panel
-        if (new string[] { ".cur", ".ani" }.Any(path.ToLower().EndsWith))
+        if (new[] { ".cur", ".ani" }.Any(ext => path.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
         {
             _ip.Cursor = CursorProvider.GetCursor(path) ?? Cursors.Arrow;
         }
@@ -138,7 +181,12 @@ public class Plugin : IViewer
 
     public void Cleanup()
     {
+        GC.SuppressFinalize(this);
+
         _ip?.Dispose();
         _ip = null;
+
+        _ipSvg?.Dispose();
+        _ipSvg = null;
     }
 }

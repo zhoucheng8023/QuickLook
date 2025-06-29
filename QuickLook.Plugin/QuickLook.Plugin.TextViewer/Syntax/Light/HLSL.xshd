@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 
-<SyntaxDefinition name="HLSL" extensions=".hlsl">
+<SyntaxDefinition name="HLSL" extensions=".hlsl;.fx">
 
 	<Environment>
 		<Default color="Black" bgcolor="#FFFFFF"/>
@@ -59,6 +59,7 @@
 				<Key word="cbuffer"/>
 				<Key word="register"/>
 				<Key word="sampler"/>
+				<Key word="Texture1D"/>
 				<Key word="Texture2D"/>
 				<Key word="Texture3D"/>
 				<Key word="TextureCube"/>
