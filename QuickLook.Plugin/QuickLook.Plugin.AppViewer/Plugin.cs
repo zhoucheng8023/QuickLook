@@ -16,6 +16,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 using QuickLook.Common.Plugin;
+using QuickLook.Plugin.AppViewer.InfoPanels;
 using System;
 using System.IO;
 using System.Linq;
@@ -29,8 +30,8 @@ public class Plugin : IViewer
     [
         // Android
         ".apk", ".apk.1", // Android Package
+        ".aab", // Android App Bundle
         //".aar", // Android Archive
-        //".aab", // Android App Bundle
 
         // Windows
         ".appx", ".appxbundle", // Windows APPX installer
@@ -38,7 +39,7 @@ public class Plugin : IViewer
         ".msix", ".msixbundle", // Windows MSIX installer
 
         // macOS
-        //".dmg", // macOS DMG
+        ".dmg", // macOS DMG
 
         // iOS
         ".ipa", // iOS IPA
@@ -46,6 +47,11 @@ public class Plugin : IViewer
         // HarmonyOS
         ".hap", ".hap.1", // HarmonyOS Package
         //".har", // HarmonyOS Archive
+
+        // Ubuntu
+        ".deb", // Debian Package
+        ".appimage", // AppImage Format
+        ".rpm", // Red Hat Package Manager
 
         // Others
         ".wgt", ".wgtu", // UniApp Widget
@@ -69,14 +75,23 @@ public class Plugin : IViewer
     {
         context.PreferredSize = Path.GetExtension(ConfirmPath(path)).ToLower() switch
         {
-            ".apk" => new Size { Width = 560, Height = 500 },
-            ".ipa" => new Size { Width = 560, Height = 500 },
+            ".apk" or ".aab" => new Size { Width = 600, Height = 510 },
+            ".ipa" => new Size { Width = 560, Height = 510 },
             ".hap" => new Size { Width = 560, Height = 500 },
-            ".msi" => new Size { Width = 520, Height = 230 },
+            ".msi" => new Size { Width = 560, Height = 230 },
             ".msix" or ".msixbundle" or ".appx" or ".appxbundle" => new Size { Width = 560, Height = 328 },
-            ".wgt" or ".wgtu" => new Size { Width = 600, Height = 328 },
+            ".deb" => new Size { Width = 600, Height = 345 },
+            ".dmg" => new Size { Width = 560, Height = 510 },
+            ".appimage" => new Size { Width = 600, Height = 300 },
+            ".rpm" => new Size { Width = 600, Height = 260 },
+            ".wgt" or ".wgtu" => new Size { Width = 600, Height = 345 },
             _ => throw new NotSupportedException("Extension is not supported."),
         };
+        context.Title = string.Empty;
+        context.TitlebarOverlap = false;
+        context.TitlebarBlurVisibility = false;
+        context.TitlebarColourVisibility = false;
+        context.FullWindowDragging = true;
     }
 
     public void View(string path, ContextObject context)
@@ -84,11 +99,15 @@ public class Plugin : IViewer
         _path = path;
         _ip = Path.GetExtension(ConfirmPath(path)).ToLower() switch
         {
-            ".apk" => new ApkInfoPanel(context),
+            ".apk" or ".aab" => new ApkInfoPanel(context),
             ".ipa" => new IpaInfoPanel(context),
             ".hap" => new HapInfoPanel(context),
             ".msi" => new MsiInfoPanel(context),
             ".msix" or ".msixbundle" or ".appx" or ".appxbundle" => new AppxInfoPanel(context),
+            ".deb" => new DebInfoPanel(context),
+            ".dmg" => new DmgInfoPanel(context),
+            ".appimage" => new AppImageInfoPanel(context),
+            ".rpm" => new RpmInfoPanel(context),
             ".wgt" or ".wgtu" => new WgtInfoPanel(context),
             _ => throw new NotSupportedException("Extension is not supported."),
         };

@@ -2,7 +2,7 @@
 
 <SyntaxDefinition name="Lua" extensions=".lua">
     
-    <Environment> 
+    <Environment>
         <Default color="Black" bgcolor="#FFFFFF"/>
         <Selection color="Black" bgcolor="#C3C3FF"/>
         <LineNumbers color="Gray" bgcolor="#FFFFFF"/>
@@ -25,7 +25,7 @@
         <Property name="BlockCommentEnd" value="]]"/>
     </Properties>
     
-<Digits name="Digits" color="#DF7000"/>
+    <Digits name="Digits" color="#DF7000"/>
     
     <RuleSets>
         <RuleSet ignorecase="false">

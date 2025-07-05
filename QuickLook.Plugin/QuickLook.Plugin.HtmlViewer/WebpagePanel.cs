@@ -31,10 +31,10 @@ namespace QuickLook.Plugin.HtmlViewer;
 
 public class WebpagePanel : UserControl
 {
-    private Uri _currentUri;
-    private string _primaryPath;
-    private string _fallbackPath;
-    private WebView2 _webView;
+    protected Uri _currentUri;
+    protected string _primaryPath;
+    protected string _fallbackPath;
+    protected WebView2 _webView;
 
     public string FallbackPath
     {
@@ -45,24 +45,27 @@ public class WebpagePanel : UserControl
     public WebpagePanel()
     {
         if (!Helper.IsWebView2Available())
-        {
             Content = CreateDownloadButton();
-        }
         else
+            InitializeComponent();
+    }
+
+    protected virtual void InitializeComponent()
+    {
+        _webView = new WebView2
         {
-            _webView = new WebView2
+            CreationProperties = new CoreWebView2CreationProperties
             {
-                CreationProperties = new CoreWebView2CreationProperties
-                {
-                    UserDataFolder = Path.Combine(SettingHelper.LocalDataPath, @"WebView2_Data\\"),
-                },
-                DefaultBackgroundColor = OSThemeHelper.AppsUseDarkTheme() ? Color.FromArgb(255, 32, 32, 32) : Color.White, // Prevent white flash in dark mode
-            };
-            _webView.NavigationStarting += NavigationStarting_CancelNavigation;
-            _webView.NavigationCompleted += WebView_NavigationCompleted;
-            _webView.CoreWebView2InitializationCompleted += WebView_CoreWebView2InitializationCompleted;
-            Content = _webView;
-        }
+                UserDataFolder = Path.Combine(SettingHelper.LocalDataPath, @"WebView2_Data\"),
+            },
+
+            // Prevent white flash in dark mode
+            DefaultBackgroundColor = OSThemeHelper.AppsUseDarkTheme() ? Color.FromArgb(255, 32, 32, 32) : Color.White,
+        };
+        _webView.NavigationStarting += Webview_NavigationStarting;
+        _webView.NavigationCompleted += WebView_NavigationCompleted;
+        _webView.CoreWebView2InitializationCompleted += WebView_CoreWebView2InitializationCompleted;
+        Content = _webView;
     }
 
     public void NavigateToFile(string path)
@@ -97,7 +100,7 @@ public class WebpagePanel : UserControl
             .ContinueWith(_ => Dispatcher.Invoke(() => _webView?.NavigateToString(html)));
     }
 
-    private void NavigationStarting_CancelNavigation(object sender, CoreWebView2NavigationStartingEventArgs e)
+    protected virtual void Webview_NavigationStarting(object sender, CoreWebView2NavigationStartingEventArgs e)
     {
         if (e.Uri.StartsWith("data:")) // when using NavigateToString
             return;
@@ -163,61 +166,62 @@ public class WebpagePanel : UserControl
         }
     }
 
-    private void WebView_NavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs e)
+    protected virtual void WebView_NavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs e)
     {
         _webView.DefaultBackgroundColor = Color.White; // Reset to white after page load to match expected default behavior
     }
 
-    private void WebView_CoreWebView2InitializationCompleted(object sender, CoreWebView2InitializationCompletedEventArgs e)
+    protected virtual void WebView_CoreWebView2InitializationCompleted(object sender, CoreWebView2InitializationCompletedEventArgs e)
     {
         if (e.IsSuccess)
         {
             _webView.CoreWebView2.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
+            _webView.CoreWebView2.WebResourceRequested += WebView_WebResourceRequested;
+        }
+    }
 
-            _webView.CoreWebView2.WebResourceRequested += (sender, args) =>
+    protected virtual void WebView_WebResourceRequested(object sender, CoreWebView2WebResourceRequestedEventArgs args)
+    {
+        if (string.IsNullOrWhiteSpace(_fallbackPath) || !Directory.Exists(_fallbackPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var requestedUri = new Uri(args.Request.Uri);
+
+            // Check if the request is for a local file
+            if (requestedUri.Scheme == "file" && !File.Exists(requestedUri.LocalPath))
             {
-                if (string.IsNullOrWhiteSpace(_fallbackPath) || !Directory.Exists(_fallbackPath))
-                {
-                    return;
-                }
+                // Try loading from fallback directory
+                var fileName = Path.GetFileName(requestedUri.LocalPath);
+                var fileDirectoryName = Path.GetDirectoryName(requestedUri.LocalPath);
 
-                try
+                // Convert the primary path to fallback path
+                if (fileDirectoryName.StartsWith(_primaryPath))
                 {
-                    var requestedUri = new Uri(args.Request.Uri);
+                    var fallbackFilePath = Path.Combine(
+                        _fallbackPath.Trim('/', '\\'), // Make it combinable
+                        fileDirectoryName.Substring(_primaryPath.Length).Trim('/', '\\'), // Make it combinable
+                        fileName
+                    );
 
-                    // Check if the request is for a local file
-                    if (requestedUri.Scheme == "file" && !File.Exists(requestedUri.LocalPath))
+                    if (File.Exists(fallbackFilePath))
                     {
-                        // Try loading from fallback directory
-                        var fileName = Path.GetFileName(requestedUri.LocalPath);
-                        var fileDirectoryName = Path.GetDirectoryName(requestedUri.LocalPath);
-
-                        // Convert the primary path to fallback path
-                        if (fileDirectoryName.StartsWith(_primaryPath))
-                        {
-                            var fallbackFilePath = Path.Combine(
-                                _fallbackPath.Trim('/', '\\'), // Make it combinable
-                                fileDirectoryName.Substring(_primaryPath.Length).Trim('/', '\\'), // Make it combinable
-                                fileName
-                            );
-
-                            if (File.Exists(fallbackFilePath))
-                            {
-                                // Serve the file from the fallback directory
-                                var fileStream = File.OpenRead(fallbackFilePath);
-                                var response = _webView.CoreWebView2.Environment.CreateWebResourceResponse(
-                                    fileStream, 200, "OK", "Content-Type: application/octet-stream");
-                                args.Response = response;
-                            }
-                        }
+                        // Serve the file from the fallback directory
+                        var fileStream = File.OpenRead(fallbackFilePath);
+                        var response = _webView.CoreWebView2.Environment.CreateWebResourceResponse(
+                            fileStream, 200, "OK", "Content-Type: application/octet-stream");
+                        args.Response = response;
                     }
                 }
-                catch (Exception e)
-                {
-                    // We don't need to feel burdened by any exceptions
-                    Debug.WriteLine(e);
-                }
-            };
+            }
+        }
+        catch (Exception e)
+        {
+            // We don't need to feel burdened by any exceptions
+            Debug.WriteLine(e);
         }
     }
 
