@@ -34,7 +34,7 @@ internal class TrayIconManager : IDisposable
     private readonly NotifyIcon _icon;
 
     private readonly MenuItem _itemAutorun =
-        new MenuItem(TranslationHelper.Get("Icon_RunAtStartup"),
+        new(TranslationHelper.Get("Icon_RunAtStartup"),
             (sender, e) =>
             {
                 if (AutoStartupHelper.IsAutorun())

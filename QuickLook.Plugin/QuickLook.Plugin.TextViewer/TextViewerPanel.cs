@@ -17,35 +17,52 @@
 
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
-using ICSharpCode.AvalonEdit.Highlighting;
 using ICSharpCode.AvalonEdit.Rendering;
 using ICSharpCode.AvalonEdit.Search;
 using QuickLook.Common.Helpers;
 using QuickLook.Common.Plugin;
+using QuickLook.Plugin.TextViewer.Detectors;
+using QuickLook.Plugin.TextViewer.Themes;
+using QuickLook.Plugin.TextViewer.Themes.HighlightingDefinitions;
 using System;
+using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Reflection;
-using System.Text;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using UtfUnknown;
 
 namespace QuickLook.Plugin.TextViewer;
 
-public class TextViewerPanel : TextEditor, IDisposable
+public partial class TextViewerPanel : TextEditor, IDisposable
 {
-    private readonly ContextObject _context;
     private bool _disposed;
-    private HighlightingManager highlightingManager = HighlightingManager.Instance;
 
-    public TextViewerPanel(string path, ContextObject context)
+    static TextViewerPanel()
     {
-        _context = context;
+        // Implementation of the Search Panel Styled with Fluent Theme
+        {
+            var groupDictionary = new ResourceDictionary();
+            groupDictionary.MergedDictionaries.Add(new ResourceDictionary()
+            {
+                Source = new Uri("pack://application:,,,/QuickLook.Plugin.TextViewer;component/Controls/DropDownButton.xaml", UriKind.Absolute)
+            });
+            groupDictionary.MergedDictionaries.Add(new ResourceDictionary()
+            {
+                Source = new Uri("pack://application:,,,/QuickLook.Plugin.TextViewer;component/Controls/SearchPanel.xaml", UriKind.Absolute)
+            });
+            Application.Current.Resources.MergedDictionaries.Add(groupDictionary);
+        }
 
+        // Initialize the Highlighting Theme Manager
+        HighlightingThemeManager.Initialize();
+    }
+
+    public TextViewerPanel()
+    {
         FontSize = 14;
         ShowLineNumbers = true;
         WordWrap = true;
@@ -70,6 +87,7 @@ public class TextViewerPanel : TextEditor, IDisposable
         ManipulationInertiaStarting += Viewer_ManipulationInertiaStarting;
         ManipulationStarting += Viewer_ManipulationStarting;
         ManipulationDelta += Viewer_ManipulationDelta;
+        KeyDown += Viewer_KeyDown;
 
         PreviewMouseWheel += Viewer_MouseWheel;
 
@@ -79,14 +97,6 @@ public class TextViewerPanel : TextEditor, IDisposable
         TextArea.TextView.ElementGenerators.Add(new TruncateLongLines());
 
         SearchPanel.Install(this);
-
-        LoadFileAsync(path);
-    }
-
-    public HighlightingManager HighlightingManager
-    {
-        get => highlightingManager;
-        set => highlightingManager = value;
     }
 
     public void Dispose()
@@ -123,6 +133,27 @@ public class TextViewerPanel : TextEditor, IDisposable
         e.Mode = ManipulationModes.Translate;
     }
 
+    private void Viewer_KeyDown(object sender, KeyEventArgs e)
+    {
+        // Support keyboard shortcuts for RTL and LTR text direction
+        if (Keyboard.IsKeyDown(Key.LeftCtrl) || Keyboard.IsKeyDown(Key.RightCtrl))
+        {
+            // RTL: Ctrl + RShift
+            // LTR: Ctrl + LShift
+            if (Keyboard.IsKeyDown(Key.RightShift))
+                FlowDirection = System.Windows.FlowDirection.RightToLeft;
+            else if (Keyboard.IsKeyDown(Key.LeftShift))
+                FlowDirection = System.Windows.FlowDirection.LeftToRight;
+        }
+        else if (Keyboard.IsKeyDown(Key.LeftAlt) || Keyboard.IsKeyDown(Key.RightAlt))
+        {
+            if (Keyboard.IsKeyDown(Key.Z))
+            {
+                WordWrap = !WordWrap;
+            }
+        }
+    }
+
     private class TruncateLongLines : VisualLineElementGenerator
     {
         private const int MAX_LENGTH = 10000;
@@ -146,7 +177,7 @@ public class TextViewerPanel : TextEditor, IDisposable
         }
     }
 
-    private void LoadFileAsync(string path)
+    public void LoadFileAsync(string path, ContextObject context)
     {
         _ = Task.Run(() =>
         {
@@ -173,15 +204,14 @@ public class TextViewerPanel : TextEditor, IDisposable
                 return;
 
             if (fileTooLong)
-                _context.Title += " (0 ~ 5MB)";
+                context.Title += " (0 ~ 5MB)";
 
             var bufferCopy = buffer.ToArray();
             buffer.Dispose();
 
-            var result = CharsetDetector.DetectFromBytes(bufferCopy);
-            var encoding = result.DoubleDetectFromResult(bufferCopy); // Fix issues
-
-            var doc = new TextDocument(encoding.GetString(bufferCopy));
+            var encoding = EncodingDetector.DetectFromBytes(bufferCopy);
+            var text = encoding.GetString(bufferCopy);
+            var doc = new TextDocument(text);
             doc.SetOwnerThread(Dispatcher.Thread);
 
             if (_disposed)
@@ -189,68 +219,52 @@ public class TextViewerPanel : TextEditor, IDisposable
 
             Dispatcher.BeginInvoke(() =>
             {
+                var extension = Path.GetExtension(path);
+                var highlighting = HighlightingThemeManager.GetHighlightingByExtensionOrDetector(path, extension, text);
+
                 Encoding = encoding;
                 SyntaxHighlighting = bufferCopy.Length > maxHighlightingLength
                     ? null
-                    : HighlightingManager?.GetDefinitionByExtension(Path.GetExtension(path));
+                    : highlighting.SyntaxHighlighting;
                 Document = doc;
 
-                _context.IsBusy = false;
+                if (SyntaxHighlighting is ICustomHighlightingDefinition custom)
+                {
+                    foreach (var lineTransformer in custom.LineTransformers)
+                    {
+                        TextArea.TextView.LineTransformers.Add(lineTransformer);
+                    }
+                }
+
+                if (highlighting.IsDark)
+                {
+                    Background = Brushes.Transparent;
+                    SetResourceReference(ForegroundProperty, "WindowTextForeground");
+                }
+                else
+                {
+                    // if os dark mode, but not AllowDarkTheme, make background light
+                    Background = OSThemeHelper.AppsUseDarkTheme()
+                        ? new SolidColorBrush(Color.FromArgb(175, 255, 255, 255))
+                        : Brushes.Transparent;
+                }
+
+                // Support automatic RTL for text files
+                if (extension.Equals(".txt", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (CultureInfo.CurrentUICulture.TextInfo.IsRightToLeft)
+                    {
+                        string isSupportRTL = TranslationHelper.Get("IsSupportRTL",
+                            failsafe: bool.TrueString,
+                            domain: Assembly.GetExecutingAssembly().GetName().Name);
+
+                        if (bool.TrueString.Equals(isSupportRTL, StringComparison.OrdinalIgnoreCase))
+                            FlowDirection = System.Windows.FlowDirection.RightToLeft;
+                    }
+                }
+
+                context.IsBusy = false;
             }, DispatcherPriority.Render);
         });
-    }
-}
-
-file static class DetectionExtensions
-{
-    public static Encoding DoubleDetectFromResult(this DetectionResult result, byte[] buffer)
-    {
-        // Determine the highest confidence encoding, or fallback to ANSI
-        var encoding = result.Detected?.Encoding ?? Encoding.Default;
-
-        // When mixing encodings, one of the encodings may gain higher confidence
-        // In this case, we should return to encodings UTF8 / UTF32 / ANSI
-        // https://github.com/QL-Win/QuickLook/issues/769
-        if (encoding != Encoding.UTF8 && encoding != Encoding.UTF32 && encoding != Encoding.Default)
-        {
-            if (result.Details.Any(detail => detail.Encoding == Encoding.UTF8))
-            {
-                encoding = Encoding.UTF8;
-            }
-            else if (result.Details.Any(detail => detail.Encoding == Encoding.UTF32))
-            {
-                encoding = Encoding.UTF32;
-            }
-            else if (result.Details.Any(detail => detail.Encoding == Encoding.Default))
-            {
-                encoding = Encoding.Default;
-            }
-        }
-
-        // When the text is too short and lacks a BOM
-        // In this case, we should fallback to an encoding if it is not recognized as UTF8 / UTF32 / ANSI
-        // https://github.com/QL-Win/QuickLook/issues/471
-        // https://github.com/QL-Win/QuickLook/issues/600
-        // https://github.com/QL-Win/QuickLook/issues/954
-        if (buffer.Length <= 50)
-        {
-            if (encoding != Encoding.UTF8 && encoding != Encoding.UTF32 && encoding != Encoding.Default)
-            {
-                if (!Encoding.UTF8.GetString(buffer).Contains("\uFFFD"))
-                {
-                    encoding = Encoding.UTF8;
-                }
-                else if (!Encoding.UTF32.GetString(buffer).Contains("\uFFFD"))
-                {
-                    encoding = Encoding.UTF32;
-                }
-                else if (!Encoding.Default.GetString(buffer).Contains("\uFFFD"))
-                {
-                    encoding = Encoding.Default;
-                }
-            }
-        }
-
-        return encoding;
     }
 }

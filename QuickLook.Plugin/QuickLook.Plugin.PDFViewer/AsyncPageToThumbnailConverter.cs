@@ -18,6 +18,7 @@
 using System;
 using System.Globalization;
 using System.Threading.Tasks;
+using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media.Imaging;
 
@@ -26,12 +27,11 @@ namespace QuickLook.Plugin.PDFViewer;
 internal class AsyncPageToThumbnailConverter : IMultiValueConverter
 {
     private static readonly BitmapImage Loading =
-        new BitmapImage(
-            new Uri("pack://application:,,,/QuickLook.Plugin.PdfViewer;component/Resources/loading.png"));
+        new(new Uri("pack://application:,,,/QuickLook.Plugin.PdfViewer;component/Resources/loading.png"));
 
     public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
     {
-        if (values.Length < 2)
+        if (values.Length < 3)
             throw new Exception("PageIdToImageConverter");
 
         if (values[0] is not PdfDocumentWrapper handle) return null;
@@ -39,11 +39,17 @@ internal class AsyncPageToThumbnailConverter : IMultiValueConverter
         var pageId = (int)values[1];
         if (pageId < 0) return null;
 
+        if (values[2] is not UserControl thisPdfViewer) return null;
+
         var task = Task.Run(() =>
         {
             try
             {
-                return handle.RenderThumbnail(pageId);
+                if (handle is null || thisPdfViewer is null) return Loading;
+                return thisPdfViewer.Dispatcher.Invoke(() =>
+                {
+                    return handle.RenderThumbnail(pageId);
+                });
             }
             catch (Exception)
             {
